@@ -1,0 +1,25 @@
+# E1.2 — подбор скорости обучения, числа эпох и размера пакета.
+# Покрывает задание 2 лабораторной 1.
+#
+# Тот же датасет и та же модель, что в E1.1: меняются только гиперпараметры
+# и масштабирование признаков. Разница в результате — и есть ответ на задание 1.
+name: single_neuron_linreg_tuned
+
+data:
+  name: lab1_linreg
+  normalize: true
+
+model:
+  name: mlp
+  hidden: []
+
+train:
+  epochs: 300
+  batch_size: 4
+  lr: 0.05
+  optimizer: rmsprop
+  loss: mse
+  metric: rmse
+  metric_mode: min
+
+seed: 0

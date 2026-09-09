@@ -1,0 +1,16 @@
+# Данные и веса в git не едут никогда (§13.3)
+data/
+checkpoints/
+results/_smoke/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.ipynb_checkpoints/
+
+# Прочее
+.DS_Store
+.vscode/
