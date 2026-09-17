@@ -11,7 +11,7 @@
 Ноутбук / WSL2, только CPU:
 
 ```bash
-python -m venv .venv && source .venv/bin/activate
+python3 -m venv .venv && source .venv/bin/activate   # в WSL именно python3: `python` там не существует
 pip install -r requirements-local.txt \
     --index-url https://download.pytorch.org/whl/cpu \
     --extra-index-url https://pypi.org/simple
@@ -21,6 +21,8 @@ pip install -e .
 Colab: см. `colab/run_on_colab.ipynb` — torch там не переустанавливается.
 
 ## Запуск
+
+Цели `make` берут интерпретатор из `.venv/` сами, активировать venv для них не обязательно.
 
 ```bash
 make smoke                                   # проверка каркаса, ~10 секунд
