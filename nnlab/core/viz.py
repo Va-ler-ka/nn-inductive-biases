@@ -72,8 +72,14 @@ def compare_table(exp_ids: list[str], metric: str, runs: list[dict] | None = Non
             continue
         values = [r["metrics"][metric] for r in selected if metric in r["metrics"]]
         times = [r["train"]["wall_time_s"] for r in selected]
-        devices = {r["env"]["device"] for r in selected}
+        # device_name, а не device: «cpu» на ноутбуке и «cpu» на Colab — разное железо,
+        # и сводная таблица (results.aggregate) различает их именно так. Витрина
+        # обязана показывать то же самое, иначе она тихо противоречит summary.md.
+        devices = {r["env"].get("device_name", r["env"]["device"]) for r in selected}
+        precisions = {r["env"].get("precision", "?") for r in selected}
         spread = f" ± {pstdev(values):.4f}" if len(values) > 1 else ""
+        if len(values) > 1 and len(precisions) > 1:
+            spread += " ⚠ разная точность"
         time_cell = f"{mean(times):.1f}" if len(devices) == 1 else "разные устройства"
         lines.append(
             f"| {exp_id} | {selected[0]['name']} | {len(selected)} | "

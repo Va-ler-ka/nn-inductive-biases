@@ -69,7 +69,8 @@ def test_viz_does_not_import_torch():
     import ast
     import pathlib
 
-    source = pathlib.Path("nnlab/core/viz.py").read_text(encoding="utf-8")
+    repo_root = pathlib.Path(__file__).resolve().parents[1]
+    source = (repo_root / "nnlab" / "core" / "viz.py").read_text(encoding="utf-8")
     tree = ast.parse(source)
     imported = set()
     for node in ast.walk(tree):
@@ -78,3 +79,39 @@ def test_viz_does_not_import_torch():
         elif isinstance(node, ast.ImportFrom) and node.module:
             imported.add(node.module.split(".")[0])
     assert "torch" not in imported
+
+
+def test_aggregate_flags_mixed_precision():
+    """§4.4: fp16 и fp32 расходятся в метриках, усреднять их молча нельзя."""
+
+    def fake(precision: str, value: float):
+        return {
+            "exp_id": "X2", "config_hash": "bbb", "name": "x", "seed": 0,
+            "metrics": {"rmse": value},
+            "train": {"wall_time_s": 10.0},
+            "model": {"params_trainable": 1},
+            "env": {"device_name": "T4", "precision": precision},
+        }
+
+    same = aggregate([fake("fp16", 1.0), fake("fp16", 2.0)])[0]
+    assert not same["mixed_precision"]
+
+    mixed = aggregate([fake("fp16", 1.0), fake("fp32", 2.0)])[0]
+    assert mixed["mixed_precision"]
+
+
+def test_gitignore_does_not_hide_source():
+    """`data/` без ведущего слэша выкидывает из репозитория nnlab/data/."""
+    import pathlib
+
+    repo_root = pathlib.Path(__file__).resolve().parents[1]
+    rules = repo_root.joinpath(".gitignore").read_text(encoding="utf-8").splitlines()
+    bad = [r for r in rules if r.strip() in {"data/", "data", "models/", "train/", "core/"}]
+    assert not bad, f"неякорённые правила скроют код внутри nnlab/: {bad}"
+
+
+def test_hash_ignores_cosmetic_name():
+    """Переименование эксперимента не должно раскалывать группу в summary.md."""
+    a = load_config("E1.1")
+    b = load_config("E1.1", ["name=совсем_другая_подпись"])
+    assert config_hash(a) == config_hash(b)

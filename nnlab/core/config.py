@@ -20,7 +20,9 @@ CONFIG_ROOT = Path(__file__).resolve().parents[2] / "configs"
 # Поля, которые НЕ влияют на результат эксперимента и потому не входят в хеш.
 # Сид исключён сознательно: три сида одной конфигурации обязаны иметь один
 # config_hash, иначе results.py не сможет их сгруппировать (§4.2).
-_HASH_EXCLUDE = {"seed", "smoke", "device", "num_workers", "resume", "notes"}
+# `name` тоже косметика: переименование эксперимента не должно менять хеш,
+# иначе одна правка подписи в yaml тихо расколет группу в summary.md надвое.
+_HASH_EXCLUDE = {"seed", "smoke", "device", "num_workers", "resume", "notes", "name"}
 
 DEFAULTS: dict[str, Any] = {
     "seed": 0,

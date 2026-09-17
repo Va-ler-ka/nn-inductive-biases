@@ -86,6 +86,11 @@ def aggregate(runs: list[dict]) -> list[dict]:
     rows = []
     for (exp_id, cfg_hash), items in sorted(groups.items()):
         devices = {r["env"].get("device_name", "?") for r in items}
+        # §4.4: fp16 против fp32 расходятся в метриках в третьем знаке, поэтому
+        # точность проверяется наравне с устройством. config_hash её не различает
+        # (она выбирается автоматически по железу), так что поймать смешение
+        # можно только здесь.
+        precisions = {r["env"].get("precision", "?") for r in items}
         metric_keys = sorted({k for r in items for k in r["metrics"]})
 
         agg_metrics = {}
@@ -109,7 +114,9 @@ def aggregate(runs: list[dict]) -> list[dict]:
                 "name": items[0]["name"],
                 "n_seeds": len(items),
                 "devices": sorted(devices),
+                "precisions": sorted(precisions),
                 "mixed_devices": len(devices) > 1,
+                "mixed_precision": len(precisions) > 1,
                 "params_trainable": items[0]["model"].get("params_trainable"),
                 "metrics": agg_metrics,
                 "wall_time_s": time_mean,
@@ -145,6 +152,8 @@ def to_markdown(rows: list[dict]) -> str:
             value = f"{stat['mean']:.4f}"
             if stat["n"] > 1:
                 value += f" ± {stat['std']:.4f}"
+            if row["mixed_precision"]:
+                value += " ⚠"
             lines.append(
                 f"| {row['exp_id'] if first else ''} | {row['name'] if first else ''} | "
                 f"{row['n_seeds'] if first else ''} | {device if first else ''} | "
@@ -159,6 +168,14 @@ def to_markdown(rows: list[dict]) -> str:
             "> Для строк, помеченных «разные устройства», время обучения не усредняется:",
             "> запуски выполнены на разном железе (§5.7). Это либо ошибка протокола,",
             "> либо сознательное сравнение CPU и GPU (E5.3) — разбирается отдельно.",
+        ]
+    if any(r["mixed_precision"] for r in rows):
+        lines += [
+            "",
+            "> Значения со знаком ⚠ усреднены по прогонам с разной точностью "
+            "(" + ", ".join(sorted({p for r in rows if r["mixed_precision"] for p in r["precisions"]})) + ").",
+            "> По §4.4 fp16 и fp32 расходятся в третьем знаке, по §5.7 такие прогоны",
+            "> в одну ячейку не сводятся: группу надо перезапустить целиком на одном устройстве.",
         ]
     return "\n".join(lines) + "\n"
 

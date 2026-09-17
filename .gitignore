@@ -1,7 +1,9 @@
-# Данные и веса в git не едут никогда (§13.3)
-data/
-checkpoints/
-results/_smoke/
+# Данные и веса в git не едут никогда (§13.3).
+# Ведущий слэш обязателен: без него правило `data/` совпадает с ЛЮБЫМ каталогом
+# с таким именем на любой глубине и выкидывает из репозитория nnlab/data/.
+/data/
+/checkpoints/
+/results/_smoke/
 
 # Python
 __pycache__/
@@ -10,7 +12,11 @@ __pycache__/
 venv/
 *.egg-info/
 .ipynb_checkpoints/
+.pytest_cache/
+.ruff_cache/
 
 # Прочее
 .DS_Store
 .vscode/
+.idea/
+*.tmp

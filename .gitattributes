@@ -1,0 +1,6 @@
+# Репозиторий ходит между WSL, Windows и Colab. Переводы строк — всегда LF,
+# независимо от core.autocrlf на конкретной машине (§13.4).
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.pt binary

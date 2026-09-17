@@ -11,3 +11,7 @@ pandas==2.2.3
 scikit-learn==1.5.2
 torchmetrics==1.5.2
 jupyterlab==4.3.1
+
+# Инструменты: на них уже ссылаются Makefile (test, lint) и pyproject ([tool.ruff]).
+pytest==8.3.4
+ruff==0.8.4

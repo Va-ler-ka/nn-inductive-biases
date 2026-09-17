@@ -1,0 +1,218 @@
+diff --git a/.gitignore b/.gitignore
+index f5d1dda..9fb9e87 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -1,7 +1,9 @@
+-# Данные и веса в git не едут никогда (§13.3)
+-data/
+-checkpoints/
+-results/_smoke/
++# Данные и веса в git не едут никогда (§13.3).
++# Ведущий слэш обязателен: без него правило `data/` совпадает с ЛЮБЫМ каталогом
++# с таким именем на любой глубине и выкидывает из репозитория nnlab/data/.
++/data/
++/checkpoints/
++/results/_smoke/
+ 
+ # Python
+ __pycache__/
+@@ -10,7 +12,11 @@ __pycache__/
+ venv/
+ *.egg-info/
+ .ipynb_checkpoints/
++.pytest_cache/
++.ruff_cache/
+ 
+ # Прочее
+ .DS_Store
+ .vscode/
++.idea/
++*.tmp
+diff --git a/Makefile b/Makefile
+index 2fdf9cf..4d32e54 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,4 +1,4 @@
+-.PHONY: smoke summary test clean
++.PHONY: smoke summary test lint clean clean-ckpt
+ 
+ # Проверка, что каркас жив: два батча, две эпохи, десять секунд.
+ smoke:
+@@ -10,6 +10,13 @@ summary:
+ test:
+ 	python -m pytest -q tests/
+ 
++lint:
++	python -m ruff check nnlab scripts tests
++
++# checkpoints здесь НЕ трогаем: в них лежит возобновление оборванных прогонов (§4.1 п. 6).
+ clean:
+-	rm -rf results/_smoke checkpoints
++	rm -rf results/_smoke
+ 	find . -name __pycache__ -type d -exec rm -rf {} +
++
++clean-ckpt:
++	rm -rf checkpoints
+diff --git a/nnlab/core/config.py b/nnlab/core/config.py
+index 0ed33e5..781d426 100644
+--- a/nnlab/core/config.py
++++ b/nnlab/core/config.py
+@@ -20,7 +20,9 @@ CONFIG_ROOT = Path(__file__).resolve().parents[2] / "configs"
+ # Поля, которые НЕ влияют на результат эксперимента и потому не входят в хеш.
+ # Сид исключён сознательно: три сида одной конфигурации обязаны иметь один
+ # config_hash, иначе results.py не сможет их сгруппировать (§4.2).
+-_HASH_EXCLUDE = {"seed", "smoke", "device", "num_workers", "resume", "notes"}
++# `name` тоже косметика: переименование эксперимента не должно менять хеш,
++# иначе одна правка подписи в yaml тихо расколет группу в summary.md надвое.
++_HASH_EXCLUDE = {"seed", "smoke", "device", "num_workers", "resume", "notes", "name"}
+ 
+ DEFAULTS: dict[str, Any] = {
+     "seed": 0,
+diff --git a/nnlab/core/results.py b/nnlab/core/results.py
+index a56da92..60e2318 100644
+--- a/nnlab/core/results.py
++++ b/nnlab/core/results.py
+@@ -86,6 +86,11 @@ def aggregate(runs: list[dict]) -> list[dict]:
+     rows = []
+     for (exp_id, cfg_hash), items in sorted(groups.items()):
+         devices = {r["env"].get("device_name", "?") for r in items}
++        # §4.4: fp16 против fp32 расходятся в метриках в третьем знаке, поэтому
++        # точность проверяется наравне с устройством. config_hash её не различает
++        # (она выбирается автоматически по железу), так что поймать смешение
++        # можно только здесь.
++        precisions = {r["env"].get("precision", "?") for r in items}
+         metric_keys = sorted({k for r in items for k in r["metrics"]})
+ 
+         agg_metrics = {}
+@@ -109,7 +114,9 @@ def aggregate(runs: list[dict]) -> list[dict]:
+                 "name": items[0]["name"],
+                 "n_seeds": len(items),
+                 "devices": sorted(devices),
++                "precisions": sorted(precisions),
+                 "mixed_devices": len(devices) > 1,
++                "mixed_precision": len(precisions) > 1,
+                 "params_trainable": items[0]["model"].get("params_trainable"),
+                 "metrics": agg_metrics,
+                 "wall_time_s": time_mean,
+@@ -145,6 +152,8 @@ def to_markdown(rows: list[dict]) -> str:
+             value = f"{stat['mean']:.4f}"
+             if stat["n"] > 1:
+                 value += f" ± {stat['std']:.4f}"
++            if row["mixed_precision"]:
++                value += " ⚠"
+             lines.append(
+                 f"| {row['exp_id'] if first else ''} | {row['name'] if first else ''} | "
+                 f"{row['n_seeds'] if first else ''} | {device if first else ''} | "
+@@ -160,6 +169,14 @@ def to_markdown(rows: list[dict]) -> str:
+             "> запуски выполнены на разном железе (§5.7). Это либо ошибка протокола,",
+             "> либо сознательное сравнение CPU и GPU (E5.3) — разбирается отдельно.",
+         ]
++    if any(r["mixed_precision"] for r in rows):
++        lines += [
++            "",
++            "> Значения со знаком ⚠ усреднены по прогонам с разной точностью "
++            "(" + ", ".join(sorted({p for r in rows if r["mixed_precision"] for p in r["precisions"]})) + ").",
++            "> По §4.4 fp16 и fp32 расходятся в третьем знаке, по §5.7 такие прогоны",
++            "> в одну ячейку не сводятся: группу надо перезапустить целиком на одном устройстве.",
++        ]
+     return "\n".join(lines) + "\n"
+ 
+ 
+diff --git a/nnlab/core/viz.py b/nnlab/core/viz.py
+index 55408b0..7019f2f 100644
+--- a/nnlab/core/viz.py
++++ b/nnlab/core/viz.py
+@@ -72,8 +72,14 @@ def compare_table(exp_ids: list[str], metric: str, runs: list[dict] | None = Non
+             continue
+         values = [r["metrics"][metric] for r in selected if metric in r["metrics"]]
+         times = [r["train"]["wall_time_s"] for r in selected]
+-        devices = {r["env"]["device"] for r in selected}
++        # device_name, а не device: «cpu» на ноутбуке и «cpu» на Colab — разное железо,
++        # и сводная таблица (results.aggregate) различает их именно так. Витрина
++        # обязана показывать то же самое, иначе она тихо противоречит summary.md.
++        devices = {r["env"].get("device_name", r["env"]["device"]) for r in selected}
++        precisions = {r["env"].get("precision", "?") for r in selected}
+         spread = f" ± {pstdev(values):.4f}" if len(values) > 1 else ""
++        if len(values) > 1 and len(precisions) > 1:
++            spread += " ⚠ разная точность"
+         time_cell = f"{mean(times):.1f}" if len(devices) == 1 else "разные устройства"
+         lines.append(
+             f"| {exp_id} | {selected[0]['name']} | {len(selected)} | "
+diff --git a/requirements-local.txt b/requirements-local.txt
+index 9e391c1..51f7df7 100644
+--- a/requirements-local.txt
++++ b/requirements-local.txt
+@@ -11,3 +11,7 @@ pandas==2.2.3
+ scikit-learn==1.5.2
+ torchmetrics==1.5.2
+ jupyterlab==4.3.1
++
++# Инструменты: на них уже ссылаются Makefile (test, lint) и pyproject ([tool.ruff]).
++pytest==8.3.4
++ruff==0.8.4
+diff --git a/tests/test_core.py b/tests/test_core.py
+index 1813818..8b1e1a2 100644
+--- a/tests/test_core.py
++++ b/tests/test_core.py
+@@ -69,7 +69,8 @@ def test_viz_does_not_import_torch():
+     import ast
+     import pathlib
+ 
+-    source = pathlib.Path("nnlab/core/viz.py").read_text(encoding="utf-8")
++    repo_root = pathlib.Path(__file__).resolve().parents[1]
++    source = (repo_root / "nnlab" / "core" / "viz.py").read_text(encoding="utf-8")
+     tree = ast.parse(source)
+     imported = set()
+     for node in ast.walk(tree):
+@@ -78,3 +79,39 @@ def test_viz_does_not_import_torch():
+         elif isinstance(node, ast.ImportFrom) and node.module:
+             imported.add(node.module.split(".")[0])
+     assert "torch" not in imported
++
++
++def test_aggregate_flags_mixed_precision():
++    """§4.4: fp16 и fp32 расходятся в метриках, усреднять их молча нельзя."""
++
++    def fake(precision: str, value: float):
++        return {
++            "exp_id": "X2", "config_hash": "bbb", "name": "x", "seed": 0,
++            "metrics": {"rmse": value},
++            "train": {"wall_time_s": 10.0},
++            "model": {"params_trainable": 1},
++            "env": {"device_name": "T4", "precision": precision},
++        }
++
++    same = aggregate([fake("fp16", 1.0), fake("fp16", 2.0)])[0]
++    assert not same["mixed_precision"]
++
++    mixed = aggregate([fake("fp16", 1.0), fake("fp32", 2.0)])[0]
++    assert mixed["mixed_precision"]
++
++
++def test_gitignore_does_not_hide_source():
++    """`data/` без ведущего слэша выкидывает из репозитория nnlab/data/."""
++    import pathlib
++
++    repo_root = pathlib.Path(__file__).resolve().parents[1]
++    rules = repo_root.joinpath(".gitignore").read_text(encoding="utf-8").splitlines()
++    bad = [r for r in rules if r.strip() in {"data/", "data", "models/", "train/", "core/"}]
++    assert not bad, f"неякорённые правила скроют код внутри nnlab/: {bad}"
++
++
++def test_hash_ignores_cosmetic_name():
++    """Переименование эксперимента не должно раскалывать группу в summary.md."""
++    a = load_config("E1.1")
++    b = load_config("E1.1", ["name=совсем_другая_подпись"])
++    assert config_hash(a) == config_hash(b)
+diff --git a/.gitattributes b/.gitattributes
+new file mode 100644
+index 0000000..a914491
+--- /dev/null
++++ b/.gitattributes
+@@ -0,0 +1,6 @@
++# Репозиторий ходит между WSL, Windows и Colab. Переводы строк — всегда LF,
++# независимо от core.autocrlf на конкретной машине (§13.4).
++* text=auto eol=lf
++*.png binary
++*.jpg binary
++*.pt binary
